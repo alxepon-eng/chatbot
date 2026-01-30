@@ -1,0 +1,391 @@
+// Google Apps Script - Code.gs
+
+const SHEET_ID = '1dOt0LEphWHlYnbxX9rO6ffp4eAkSnsbct-yK_GFrqbs';
+const FOLDER_ID = '1GduzdhB0Ec_NfZDnLMUBTGGnWIKfRdyn';
+
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    
+    if (data.action === 'submitWork') {
+      return handleStudentSubmission(data);
+    } else if (data.action === 'createAssignment') {
+      return handleAssignmentCreation(data);
+    }
+    
+    return createResponse(false, 'Unknown action');
+  } catch (error) {
+    return createResponse(false, error.toString());
+  }
+}
+
+function handleStudentSubmission(data) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName('StudentSubmissions');
+  
+  // Create sheet if not exists
+  if (!sheet) {
+    sheet = ss.insertSheet('StudentSubmissions');
+    sheet.appendRow([
+      'Timestamp', 'Student ID', 'Class Group', 'Subject', 
+      'Assignment Title', 'Work Link', 'Additional Message',
+      'Email', 'Phone', 'Members', 'File Name', 'File URL'
+    ]);
+    
+    // Format header
+    sheet.getRange(1, 1, 1, 12).setBackground('#ff69b4').setFontColor('white').setFontWeight('bold');
+  }
+  
+  let fileUrl = '';
+  
+  // Handle file upload
+  if (data.fileData && data.fileName) {
+    try {
+      const folder = DriveApp.getFolderById(FOLDER_ID);
+      const decodedData = Utilities.base64Decode(data.fileData);
+      const blob = Utilities.newBlob(decodedData, data.fileType, data.fileName);
+      const file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      fileUrl = file.getUrl();
+    } catch (fileError) {
+      Logger.log('File upload error: ' + fileError);
+    }
+  }
+  
+  // Append data
+  sheet.appendRow([
+    data.timestamp,
+    data.studentId,
+    data.classGroup,
+    data.subject,
+    data.assignmentTitle,
+    data.workLink,
+    data.additionalMessage,
+    data.email,
+    data.phone,
+    data.members,
+    data.fileName,
+    fileUrl
+  ]);
+  
+  // Send email notification if email provided
+  if (data.email) {
+    try {
+      sendSubmissionNotification(data, fileUrl);
+    } catch (emailError) {
+      Logger.log('Email error: ' + emailError);
+    }
+  }
+  
+  return createResponse(true, 'ส่งงานสำเร็จ!');
+}
+
+function handleAssignmentCreation(data) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName('Assignments');
+  
+  // Create sheet if not exists
+  if (!sheet) {
+    sheet = ss.insertSheet('Assignments');
+    sheet.appendRow([
+      'Timestamp', 'Class Group', 'Subject', 'Topic Title',
+      'Description', 'Deadline', 'File Name', 'File URL', 'Email Sent'
+    ]);
+    
+    // Format header
+    sheet.getRange(1, 1, 1, 9).setBackground('#9333ea').setFontColor('white').setFontWeight('bold');
+  }
+  
+  let fileUrl = '';
+  
+  // Handle file upload
+  if (data.fileData && data.fileName) {
+    try {
+      const folder = DriveApp.getFolderById(FOLDER_ID);
+      const decodedData = Utilities.base64Decode(data.fileData);
+      const blob = Utilities.newBlob(decodedData, data.fileType, data.fileName);
+      const file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      fileUrl = file.getUrl();
+    } catch (fileError) {
+      Logger.log('File upload error: ' + fileError);
+    }
+  }
+  
+  // Append data
+  sheet.appendRow([
+    data.timestamp,
+    data.classGroup,
+    data.subject,
+    data.topicTitle,
+    data.assignmentDesc,
+    data.deadline,
+    data.fileName,
+    fileUrl,
+    data.sendEmail ? 'Yes' : 'No'
+  ]);
+  
+  // Send email to students if requested
+  if (data.sendEmail) {
+    try {
+      sendAssignmentNotification(data, fileUrl);
+    } catch (emailError) {
+      Logger.log('Email error: ' + emailError);
+    }
+  }
+  
+  return createResponse(true, 'มอบหมายงานสำเร็จ!');
+}
+
+function sendSubmissionNotification(data, fileUrl) {
+  const subject = `✅ ยืนยันการส่งงาน: ${data.assignmentTitle}`;
+  
+  const body = `
+    <div style="font-family: 'Kanit', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background: linear-gradient(135deg, #ff69b4, #ffb6c1); padding: 20px; border-radius: 15px; text-align: center; color: white;">
+        <h1 style="margin: 0;">📚 ระบบส่งงาน</h1>
+        <p>การส่งงานของคุณได้รับการบันทึกเรียบร้อยแล้ว!</p>
+      </div>
+      
+      <div style="background: #fff; padding: 20px; border: 2px solid #1a1a1a; border-radius: 15px; margin-top: 20px;">
+        <h2 style="color: #ff69b4;">📋 รายละเอียดการส่งงาน</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>รหัสนักศึกษา:</strong></td><td>${data.studentId}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>กลุ่มเรียน:</strong></td><td>${data.classGroup}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>รายวิชา:</strong></td><td>${data.subject}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>หัวข้องาน:</strong></td><td>${data.assignmentTitle}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>เวลาส่ง:</strong></td><td>${new Date(data.timestamp).toLocaleString('th-TH')}</td></tr>
+          ${fileUrl ? `<tr><td style="padding: 8px 0;"><strong>ไฟล์แนบ:</strong></td><td><a href="${fileUrl}" style="color: #ff69b4;">ดูไฟล์</a></td></tr>` : ''}
+        </table>
+      </div>
+      
+      <p style="text-align: center; color: #888; margin-top: 20px; font-size: 12px;">
+        อีเมลนี้ถูกส่งโดยอัตโนมัติ กรุณาอย่าตอบกลับ
+      </p>
+    </div>
+  `;
+  
+  MailApp.sendEmail({
+    to: data.email,
+    subject: subject,
+    htmlBody: body
+  });
+}
+
+function sendAssignmentNotification(data, fileUrl) {
+  // This would send to all students in the class
+  // For demo, we'll just log it
+  Logger.log(`Assignment notification would be sent to: ${data.classGroup}`);
+  Logger.log(`Subject: ${data.subject}`);
+  Logger.log(`Topic: ${data.topicTitle}`);
+  Logger.log(`Deadline: ${data.deadline}`);
+}
+
+function createResponse(success, message) {
+  return ContentService.createTextOutput(JSON.stringify({
+    success: success,
+    message: message
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({
+    status: 'ok',
+    message: 'API is running'
+  })).setMimeType(ContentService.MimeType.JSON);
+}// Google Apps Script - Code.gs
+
+const SHEET_ID = '1dOt0LEphWHlYnbxX9rO6ffp4eAkSnsbct-yK_GFrqbs';
+const FOLDER_ID = '1GduzdhB0Ec_NfZDnLMUBTGGnWIKfRdyn';
+
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    
+    if (data.action === 'submitWork') {
+      return handleStudentSubmission(data);
+    } else if (data.action === 'createAssignment') {
+      return handleAssignmentCreation(data);
+    }
+    
+    return createResponse(false, 'Unknown action');
+  } catch (error) {
+    return createResponse(false, error.toString());
+  }
+}
+
+function handleStudentSubmission(data) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName('StudentSubmissions');
+  
+  // Create sheet if not exists
+  if (!sheet) {
+    sheet = ss.insertSheet('StudentSubmissions');
+    sheet.appendRow([
+      'Timestamp', 'Student ID', 'Class Group', 'Subject', 
+      'Assignment Title', 'Work Link', 'Additional Message',
+      'Email', 'Phone', 'Members', 'File Name', 'File URL'
+    ]);
+    
+    // Format header
+    sheet.getRange(1, 1, 1, 12).setBackground('#ff69b4').setFontColor('white').setFontWeight('bold');
+  }
+  
+  let fileUrl = '';
+  
+  // Handle file upload
+  if (data.fileData && data.fileName) {
+    try {
+      const folder = DriveApp.getFolderById(FOLDER_ID);
+      const decodedData = Utilities.base64Decode(data.fileData);
+      const blob = Utilities.newBlob(decodedData, data.fileType, data.fileName);
+      const file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      fileUrl = file.getUrl();
+    } catch (fileError) {
+      Logger.log('File upload error: ' + fileError);
+    }
+  }
+  
+  // Append data
+  sheet.appendRow([
+    data.timestamp,
+    data.studentId,
+    data.classGroup,
+    data.subject,
+    data.assignmentTitle,
+    data.workLink,
+    data.additionalMessage,
+    data.email,
+    data.phone,
+    data.members,
+    data.fileName,
+    fileUrl
+  ]);
+  
+  // Send email notification if email provided
+  if (data.email) {
+    try {
+      sendSubmissionNotification(data, fileUrl);
+    } catch (emailError) {
+      Logger.log('Email error: ' + emailError);
+    }
+  }
+  
+  return createResponse(true, 'ส่งงานสำเร็จ!');
+}
+
+function handleAssignmentCreation(data) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName('Assignments');
+  
+  // Create sheet if not exists
+  if (!sheet) {
+    sheet = ss.insertSheet('Assignments');
+    sheet.appendRow([
+      'Timestamp', 'Class Group', 'Subject', 'Topic Title',
+      'Description', 'Deadline', 'File Name', 'File URL', 'Email Sent'
+    ]);
+    
+    // Format header
+    sheet.getRange(1, 1, 1, 9).setBackground('#9333ea').setFontColor('white').setFontWeight('bold');
+  }
+  
+  let fileUrl = '';
+  
+  // Handle file upload
+  if (data.fileData && data.fileName) {
+    try {
+      const folder = DriveApp.getFolderById(FOLDER_ID);
+      const decodedData = Utilities.base64Decode(data.fileData);
+      const blob = Utilities.newBlob(decodedData, data.fileType, data.fileName);
+      const file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      fileUrl = file.getUrl();
+    } catch (fileError) {
+      Logger.log('File upload error: ' + fileError);
+    }
+  }
+  
+  // Append data
+  sheet.appendRow([
+    data.timestamp,
+    data.classGroup,
+    data.subject,
+    data.topicTitle,
+    data.assignmentDesc,
+    data.deadline,
+    data.fileName,
+    fileUrl,
+    data.sendEmail ? 'Yes' : 'No'
+  ]);
+  
+  // Send email to students if requested
+  if (data.sendEmail) {
+    try {
+      sendAssignmentNotification(data, fileUrl);
+    } catch (emailError) {
+      Logger.log('Email error: ' + emailError);
+    }
+  }
+  
+  return createResponse(true, 'มอบหมายงานสำเร็จ!');
+}
+
+function sendSubmissionNotification(data, fileUrl) {
+  const subject = `✅ ยืนยันการส่งงาน: ${data.assignmentTitle}`;
+  
+  const body = `
+    <div style="font-family: 'Kanit', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background: linear-gradient(135deg, #ff69b4, #ffb6c1); padding: 20px; border-radius: 15px; text-align: center; color: white;">
+        <h1 style="margin: 0;">📚 ระบบส่งงาน</h1>
+        <p>การส่งงานของคุณได้รับการบันทึกเรียบร้อยแล้ว!</p>
+      </div>
+      
+      <div style="background: #fff; padding: 20px; border: 2px solid #1a1a1a; border-radius: 15px; margin-top: 20px;">
+        <h2 style="color: #ff69b4;">📋 รายละเอียดการส่งงาน</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>รหัสนักศึกษา:</strong></td><td>${data.studentId}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>กลุ่มเรียน:</strong></td><td>${data.classGroup}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>รายวิชา:</strong></td><td>${data.subject}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>หัวข้องาน:</strong></td><td>${data.assignmentTitle}</td></tr>
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>เวลาส่ง:</strong></td><td>${new Date(data.timestamp).toLocaleString('th-TH')}</td></tr>
+          ${fileUrl ? `<tr><td style="padding: 8px 0;"><strong>ไฟล์แนบ:</strong></td><td><a href="${fileUrl}" style="color: #ff69b4;">ดูไฟล์</a></td></tr>` : ''}
+        </table>
+      </div>
+      
+      <p style="text-align: center; color: #888; margin-top: 20px; font-size: 12px;">
+        อีเมลนี้ถูกส่งโดยอัตโนมัติ กรุณาอย่าตอบกลับ
+      </p>
+    </div>
+  `;
+  
+  MailApp.sendEmail({
+    to: data.email,
+    subject: subject,
+    htmlBody: body
+  });
+}
+
+function sendAssignmentNotification(data, fileUrl) {
+  // This would send to all students in the class
+  // For demo, we'll just log it
+  Logger.log(`Assignment notification would be sent to: ${data.classGroup}`);
+  Logger.log(`Subject: ${data.subject}`);
+  Logger.log(`Topic: ${data.topicTitle}`);
+  Logger.log(`Deadline: ${data.deadline}`);
+}
+
+function createResponse(success, message) {
+  return ContentService.createTextOutput(JSON.stringify({
+    success: success,
+    message: message
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({
+    status: 'ok',
+    message: 'API is running'
+  })).setMimeType(ContentService.MimeType.JSON);
+}
